@@ -83,27 +83,7 @@ Currently supported all types
 
 ## API
 
-- [ ] `Compact`
-- [ ] `HTMLEscape`
-- [ ] `Indent`
-- [x] `Marshal`
-- [x] `MarshalIndent`
-- [x] `Unmarshal`
-- [ ] `Valid`
-- [x] `NewDecoder`
-- [x] `(*Decoder).Buffered`
-- [x] `(*Decoder).Decode`
-- [ ] `(*Decoder).DisallowUnknownFields`
-- [x] `(*Decoder).InputOffset`
-- [x] `(*Decoder).More`
-- [x] `(*Decoder).Token`
-- [ ] `(*Decoder).UseNumber`
-- [x] `Delim`
-- [x] `(Delim).String`
-- [x] `NewEncoder`
-- [x] `(*Encoder).Encode`
-- [x] `(*Encoder).SetEscapeHTML`
-- [x] `(*Encoder).SetIndent`
+Implements All APIs
 
 ### Error
 

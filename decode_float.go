@@ -27,6 +27,7 @@ var floatTable = [256]bool{
 	'.': true,
 	'e': true,
 	'E': true,
+	'+': true,
 }
 
 func floatBytes(s *stream) []byte {
@@ -45,6 +46,8 @@ func floatBytes(s *stream) []byte {
 	}
 	return s.buf[start:s.cursor]
 }
+
+func (d *floatDecoder) setDisallowUnknownFields(_ bool) {}
 
 func (d *floatDecoder) decodeStreamByte(s *stream) ([]byte, error) {
 	for {
@@ -77,8 +80,7 @@ func (d *floatDecoder) decodeByte(buf []byte, cursor int64) ([]byte, int64, erro
 			start := cursor
 			cursor++
 			for ; cursor < buflen; cursor++ {
-				tk := int(buf[cursor])
-				if (int('0') <= tk && tk <= int('9')) || tk == '.' || tk == 'e' || tk == 'E' {
+				if floatTable[buf[cursor]] {
 					continue
 				}
 				break

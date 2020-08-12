@@ -8,6 +8,7 @@ type mapDecoder struct {
 	mapType      *rtype
 	keyDecoder   decoder
 	valueDecoder decoder
+	dummy        *interfaceHeader
 }
 
 func newMapDecoder(mapType *rtype, keyDec decoder, valueDec decoder) *mapDecoder {
@@ -25,6 +26,11 @@ func makemap(*rtype, int) unsafe.Pointer
 //go:noescape
 func mapassign(t *rtype, m unsafe.Pointer, key, val unsafe.Pointer)
 
+func (d *mapDecoder) setDisallowUnknownFields(disallowUnknownFields bool) {
+	d.keyDecoder.setDisallowUnknownFields(disallowUnknownFields)
+	d.valueDecoder.setDisallowUnknownFields(disallowUnknownFields)
+}
+
 func (d *mapDecoder) setKey(buf []byte, cursor int64, key interface{}) (int64, error) {
 	header := (*interfaceHeader)(unsafe.Pointer(&key))
 	return d.keyDecoder.decode(buf, cursor, uintptr(header.ptr))
@@ -37,20 +43,35 @@ func (d *mapDecoder) setValue(buf []byte, cursor int64, key interface{}) (int64,
 
 func (d *mapDecoder) setKeyStream(s *stream, key interface{}) error {
 	header := (*interfaceHeader)(unsafe.Pointer(&key))
+	d.dummy = header
 	return d.keyDecoder.decodeStream(s, uintptr(header.ptr))
 }
 
 func (d *mapDecoder) setValueStream(s *stream, key interface{}) error {
 	header := (*interfaceHeader)(unsafe.Pointer(&key))
+	d.dummy = header
 	return d.valueDecoder.decodeStream(s, uintptr(header.ptr))
 }
 
 func (d *mapDecoder) decodeStream(s *stream, p uintptr) error {
 	s.skipWhiteSpace()
-	if s.char() != '{' {
+	switch s.char() {
+	case 'n':
+		if err := nullBytes(s); err != nil {
+			return err
+		}
+		return nil
+	case '{':
+	default:
 		return errExpected("{ character for map value", s.totalOffset())
 	}
+	s.skipWhiteSpace()
 	mapValue := makemap(d.mapType, 0)
+	if s.buf[s.cursor+1] == '}' {
+		*(*unsafe.Pointer)(unsafe.Pointer(p)) = mapValue
+		s.cursor++
+		return nil
+	}
 	for {
 		s.cursor++
 		var key interface{}
@@ -79,6 +100,7 @@ func (d *mapDecoder) decodeStream(s *stream, p uintptr) error {
 		}
 		if s.char() == '}' {
 			*(*unsafe.Pointer)(unsafe.Pointer(p)) = mapValue
+			s.cursor++
 			return nil
 		}
 		if s.char() != ',' {
@@ -94,11 +116,34 @@ func (d *mapDecoder) decode(buf []byte, cursor int64, p uintptr) (int64, error) 
 	if buflen < 2 {
 		return 0, errExpected("{} for map", cursor)
 	}
-	if buf[cursor] != '{' {
+	switch buf[cursor] {
+	case 'n':
+		if cursor+3 >= buflen {
+			return 0, errUnexpectedEndOfJSON("null", cursor)
+		}
+		if buf[cursor+1] != 'u' {
+			return 0, errInvalidCharacter(buf[cursor+1], "null", cursor)
+		}
+		if buf[cursor+2] != 'l' {
+			return 0, errInvalidCharacter(buf[cursor+2], "null", cursor)
+		}
+		if buf[cursor+3] != 'l' {
+			return 0, errInvalidCharacter(buf[cursor+3], "null", cursor)
+		}
+		cursor += 4
+		return cursor, nil
+	case '{':
+	default:
 		return 0, errExpected("{ character for map value", cursor)
 	}
 	cursor++
+	cursor = skipWhiteSpace(buf, cursor)
 	mapValue := makemap(d.mapType, 0)
+	if buf[cursor] == '}' {
+		*(*unsafe.Pointer)(unsafe.Pointer(p)) = mapValue
+		cursor++
+		return cursor, nil
+	}
 	for ; cursor < buflen; cursor++ {
 		var key interface{}
 		keyCursor, err := d.setKey(buf, cursor, &key)
@@ -124,6 +169,7 @@ func (d *mapDecoder) decode(buf []byte, cursor int64, p uintptr) (int64, error) 
 		cursor = skipWhiteSpace(buf, valueCursor)
 		if buf[cursor] == '}' {
 			*(*unsafe.Pointer)(unsafe.Pointer(p)) = mapValue
+			cursor++
 			return cursor, nil
 		}
 		if buf[cursor] != ',' {

@@ -104,6 +104,24 @@ func Test_Decoder(t *testing.T) {
 		assertEq(t, "map.b", v["b"], 2)
 		assertEq(t, "map.c", v["c"], 3)
 		assertEq(t, "map.d", v["d"], 4)
+		t.Run("nested map", func(t *testing.T) {
+			// https://github.com/goccy/go-json/issues/8
+			content := `
+{
+  "a": {
+    "nestedA": "value of nested a"
+  },  
+  "b": {
+    "nestedB": "value of nested b"
+  },  
+  "c": {
+    "nestedC": "value of nested c"
+  }
+}`
+			var v map[string]interface{}
+			assertErr(t, json.Unmarshal([]byte(content), &v))
+			assertEq(t, "length", 3, len(v))
+		})
 	})
 	t.Run("struct", func(t *testing.T) {
 		type T struct {
@@ -135,6 +153,27 @@ func Test_Decoder(t *testing.T) {
 		assertEq(t, "struct.D.AA", 2, v.D.AA)
 		assertEq(t, "struct.D.BB", "world", v.D.BB)
 		assertEq(t, "struct.D.CC", true, v.D.CC)
+		t.Run("struct.field null", func(t *testing.T) {
+			var v struct {
+				A string
+				B []string
+				C []int
+				D map[string]interface{}
+				E [2]string
+				F interface{}
+			}
+			assertErr(t, json.Unmarshal([]byte(`{"a":null,"b":null,"c":null,"d":null,"e":null,"f":null}`), &v))
+			assertEq(t, "string", v.A, "")
+			assertNeq(t, "[]string", v.B, nil)
+			assertEq(t, "[]string", len(v.B), 0)
+			assertNeq(t, "[]int", v.C, nil)
+			assertEq(t, "[]int", len(v.C), 0)
+			assertNeq(t, "map", v.D, nil)
+			assertEq(t, "map", len(v.D), 0)
+			assertNeq(t, "array", v.E, nil)
+			assertEq(t, "array", len(v.E), 2)
+			assertEq(t, "interface{}", v.F, nil)
+		})
 	})
 	t.Run("interface", func(t *testing.T) {
 		t.Run("number", func(t *testing.T) {
@@ -176,6 +215,29 @@ func Test_Decoder(t *testing.T) {
 			assertEq(t, "interface", nil, v)
 		})
 	})
+}
+
+func Test_Decoder_UseNumber(t *testing.T) {
+	dec := json.NewDecoder(strings.NewReader(`{"a": 3.14}`))
+	dec.UseNumber()
+	var v map[string]interface{}
+	assertErr(t, dec.Decode(&v))
+	assertEq(t, "json.Number", "json.Number", fmt.Sprintf("%T", v["a"]))
+}
+
+func Test_Decoder_DisallowUnknownFields(t *testing.T) {
+	dec := json.NewDecoder(strings.NewReader(`{"x": 1}`))
+	dec.DisallowUnknownFields()
+	var v struct {
+		x int
+	}
+	err := dec.Decode(&v)
+	if err == nil {
+		t.Fatal("expected unknown field error")
+	}
+	if err.Error() != `json: unknown field "x"` {
+		t.Fatal("expected unknown field error")
+	}
 }
 
 type unmarshalJSON struct {

@@ -11,6 +11,8 @@ func newStringDecoder() *stringDecoder {
 	return &stringDecoder{}
 }
 
+func (d *stringDecoder) setDisallowUnknownFields(_ bool) {}
+
 func (d *stringDecoder) decodeStream(s *stream, p uintptr) error {
 	bytes, err := d.decodeStreamByte(s)
 	if err != nil {
@@ -135,7 +137,7 @@ func (d *stringDecoder) decodeByte(buf []byte, cursor int64) ([]byte, int64, err
 			if buf[cursor+3] != 'l' {
 				return nil, 0, errInvalidCharacter(buf[cursor+3], "null", cursor)
 			}
-			cursor += 5
+			cursor += 4
 			return []byte{}, cursor, nil
 		default:
 			goto ERROR

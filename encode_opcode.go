@@ -35,7 +35,9 @@ const (
 	opSliceEnd
 
 	opSliceHeadIndent
+	opRootSliceHeadIndent
 	opSliceElemIndent
+	opRootSliceElemIndent
 	opSliceEndIndent
 
 	opArrayHead
@@ -47,13 +49,17 @@ const (
 	opArrayEndIndent
 
 	opMapHead
+	opMapHeadLoad
 	opMapKey
 	opMapValue
-	opMapEnd
 
 	opMapHeadIndent
+	opRootMapHeadIndent
+	opMapHeadLoadIndent
 	opMapKeyIndent
+	opRootMapKeyIndent
 	opMapValueIndent
+	opMapEnd
 	opMapEndIndent
 
 	// StructFieldHead
@@ -138,6 +144,8 @@ const (
 	opStructFieldPtrHeadFloat64
 	opStructFieldPtrHeadString
 	opStructFieldPtrHeadBool
+
+	opStructFieldRecursive
 
 	opStructFieldPtrHeadIndent
 	opStructFieldPtrHeadIntIndent
@@ -308,8 +316,12 @@ func (t opType) String() string {
 
 	case opSliceHeadIndent:
 		return "SLICE_HEAD_INDENT"
+	case opRootSliceHeadIndent:
+		return "ROOT_SLICE_HEAD_INDENT"
 	case opSliceElemIndent:
 		return "SLICE_ELEM_INDENT"
+	case opRootSliceElemIndent:
+		return "ROOT_SLICE_ELEM_INDENT"
 	case opSliceEndIndent:
 		return "SLICE_END_INDENT"
 
@@ -327,8 +339,9 @@ func (t opType) String() string {
 	case opArrayEndIndent:
 		return "ARRAY_END_INDENT"
 	case opMapHead:
-
 		return "MAP_HEAD"
+	case opMapHeadLoad:
+		return "MAP_HEAD_LOAD"
 	case opMapKey:
 		return "MAP_KEY"
 	case opMapValue:
@@ -338,13 +351,21 @@ func (t opType) String() string {
 
 	case opMapHeadIndent:
 		return "MAP_HEAD_INDENT"
+	case opRootMapHeadIndent:
+		return "ROOT_MAP_HEAD_INDENT"
+	case opMapHeadLoadIndent:
+		return "MAP_HEAD_LOAD_INDENT"
 	case opMapKeyIndent:
 		return "MAP_KEY_INDENT"
+	case opRootMapKeyIndent:
+		return "ROOT_MAP_KEY_INDENT"
 	case opMapValueIndent:
 		return "MAP_VALUE_INDENT"
 	case opMapEndIndent:
 		return "MAP_END_INDENT"
 
+	case opStructFieldRecursive:
+		return "STRUCT_FIELD_RECURSIVE"
 	case opStructFieldHead:
 		return "STRUCT_FIELD_HEAD"
 	case opStructFieldHeadInt:
@@ -726,12 +747,27 @@ func (t opType) String() string {
 	return ""
 }
 
+func copyOpcode(code *opcode) *opcode {
+	codeMap := map[uintptr]*opcode{}
+	return code.copy(codeMap)
+}
+
 type opcodeHeader struct {
 	op     opType
 	typ    *rtype
 	ptr    uintptr
 	indent int
 	next   *opcode
+}
+
+func (h *opcodeHeader) copy(codeMap map[uintptr]*opcode) *opcodeHeader {
+	return &opcodeHeader{
+		op:     h.op,
+		typ:    h.typ,
+		ptr:    h.ptr,
+		indent: h.indent,
+		next:   h.next.copy(codeMap),
+	}
 }
 
 type opcode struct {
@@ -760,9 +796,9 @@ func (c *opcode) beforeLastCode() *opcode {
 		switch code.op {
 		case opArrayElem, opArrayElemIndent:
 			nextCode = code.toArrayElemCode().end
-		case opSliceElem, opSliceElemIndent:
+		case opSliceElem, opSliceElemIndent, opRootSliceElemIndent:
 			nextCode = code.toSliceElemCode().end
-		case opMapKey, opMapKeyIndent:
+		case opMapKey, opMapKeyIndent, opRootMapKeyIndent:
 			nextCode = code.toMapKeyCode().end
 		default:
 			nextCode = code.next
@@ -775,6 +811,222 @@ func (c *opcode) beforeLastCode() *opcode {
 	return nil
 }
 
+func (c *opcode) copy(codeMap map[uintptr]*opcode) *opcode {
+	if c == nil {
+		return nil
+	}
+	addr := uintptr(unsafe.Pointer(c))
+	if code, exists := codeMap[addr]; exists {
+		return code
+	}
+	var code *opcode
+	switch c.op {
+	case opArrayHead, opArrayHeadIndent:
+		code = c.toArrayHeaderCode().copy(codeMap)
+	case opArrayElem, opArrayElemIndent:
+		code = c.toArrayElemCode().copy(codeMap)
+	case opSliceHead, opSliceHeadIndent, opRootSliceHeadIndent:
+		code = c.toSliceHeaderCode().copy(codeMap)
+	case opSliceElem, opSliceElemIndent, opRootSliceElemIndent:
+		code = c.toSliceElemCode().copy(codeMap)
+	case opMapHead, opMapHeadLoad, opMapHeadIndent, opMapHeadLoadIndent, opRootMapHeadIndent:
+		code = c.toMapHeadCode().copy(codeMap)
+	case opMapKey, opMapKeyIndent, opRootMapKeyIndent:
+		code = c.toMapKeyCode().copy(codeMap)
+	case opMapValue, opMapValueIndent:
+		code = c.toMapValueCode().copy(codeMap)
+	case opStructFieldRecursive:
+		code = c.toRecursiveCode().copy(codeMap)
+	case opStructFieldHead,
+		opStructFieldHeadInt,
+		opStructFieldHeadInt8,
+		opStructFieldHeadInt16,
+		opStructFieldHeadInt32,
+		opStructFieldHeadInt64,
+		opStructFieldHeadUint,
+		opStructFieldHeadUint8,
+		opStructFieldHeadUint16,
+		opStructFieldHeadUint32,
+		opStructFieldHeadUint64,
+		opStructFieldHeadFloat32,
+		opStructFieldHeadFloat64,
+		opStructFieldHeadString,
+		opStructFieldHeadBool,
+		opStructFieldHeadIndent,
+		opStructFieldHeadIntIndent,
+		opStructFieldHeadInt8Indent,
+		opStructFieldHeadInt16Indent,
+		opStructFieldHeadInt32Indent,
+		opStructFieldHeadInt64Indent,
+		opStructFieldHeadUintIndent,
+		opStructFieldHeadUint8Indent,
+		opStructFieldHeadUint16Indent,
+		opStructFieldHeadUint32Indent,
+		opStructFieldHeadUint64Indent,
+		opStructFieldHeadFloat32Indent,
+		opStructFieldHeadFloat64Indent,
+		opStructFieldHeadStringIndent,
+		opStructFieldHeadBoolIndent,
+		opStructFieldHeadOmitEmpty,
+		opStructFieldHeadIntOmitEmpty,
+		opStructFieldHeadInt8OmitEmpty,
+		opStructFieldHeadInt16OmitEmpty,
+		opStructFieldHeadInt32OmitEmpty,
+		opStructFieldHeadInt64OmitEmpty,
+		opStructFieldHeadUintOmitEmpty,
+		opStructFieldHeadUint8OmitEmpty,
+		opStructFieldHeadUint16OmitEmpty,
+		opStructFieldHeadUint32OmitEmpty,
+		opStructFieldHeadUint64OmitEmpty,
+		opStructFieldHeadFloat32OmitEmpty,
+		opStructFieldHeadFloat64OmitEmpty,
+		opStructFieldHeadStringOmitEmpty,
+		opStructFieldHeadBoolOmitEmpty,
+		opStructFieldHeadOmitEmptyIndent,
+		opStructFieldHeadIntOmitEmptyIndent,
+		opStructFieldHeadInt8OmitEmptyIndent,
+		opStructFieldHeadInt16OmitEmptyIndent,
+		opStructFieldHeadInt32OmitEmptyIndent,
+		opStructFieldHeadInt64OmitEmptyIndent,
+		opStructFieldHeadUintOmitEmptyIndent,
+		opStructFieldHeadUint8OmitEmptyIndent,
+		opStructFieldHeadUint16OmitEmptyIndent,
+		opStructFieldHeadUint32OmitEmptyIndent,
+		opStructFieldHeadUint64OmitEmptyIndent,
+		opStructFieldHeadFloat32OmitEmptyIndent,
+		opStructFieldHeadFloat64OmitEmptyIndent,
+		opStructFieldHeadStringOmitEmptyIndent,
+		opStructFieldHeadBoolOmitEmptyIndent,
+		opStructFieldPtrHead,
+		opStructFieldPtrHeadInt,
+		opStructFieldPtrHeadInt8,
+		opStructFieldPtrHeadInt16,
+		opStructFieldPtrHeadInt32,
+		opStructFieldPtrHeadInt64,
+		opStructFieldPtrHeadUint,
+		opStructFieldPtrHeadUint8,
+		opStructFieldPtrHeadUint16,
+		opStructFieldPtrHeadUint32,
+		opStructFieldPtrHeadUint64,
+		opStructFieldPtrHeadFloat32,
+		opStructFieldPtrHeadFloat64,
+		opStructFieldPtrHeadString,
+		opStructFieldPtrHeadBool,
+		opStructFieldPtrHeadIndent,
+		opStructFieldPtrHeadIntIndent,
+		opStructFieldPtrHeadInt8Indent,
+		opStructFieldPtrHeadInt16Indent,
+		opStructFieldPtrHeadInt32Indent,
+		opStructFieldPtrHeadInt64Indent,
+		opStructFieldPtrHeadUintIndent,
+		opStructFieldPtrHeadUint8Indent,
+		opStructFieldPtrHeadUint16Indent,
+		opStructFieldPtrHeadUint32Indent,
+		opStructFieldPtrHeadUint64Indent,
+		opStructFieldPtrHeadFloat32Indent,
+		opStructFieldPtrHeadFloat64Indent,
+		opStructFieldPtrHeadStringIndent,
+		opStructFieldPtrHeadBoolIndent,
+		opStructFieldPtrHeadOmitEmpty,
+		opStructFieldPtrHeadIntOmitEmpty,
+		opStructFieldPtrHeadInt8OmitEmpty,
+		opStructFieldPtrHeadInt16OmitEmpty,
+		opStructFieldPtrHeadInt32OmitEmpty,
+		opStructFieldPtrHeadInt64OmitEmpty,
+		opStructFieldPtrHeadUintOmitEmpty,
+		opStructFieldPtrHeadUint8OmitEmpty,
+		opStructFieldPtrHeadUint16OmitEmpty,
+		opStructFieldPtrHeadUint32OmitEmpty,
+		opStructFieldPtrHeadUint64OmitEmpty,
+		opStructFieldPtrHeadFloat32OmitEmpty,
+		opStructFieldPtrHeadFloat64OmitEmpty,
+		opStructFieldPtrHeadStringOmitEmpty,
+		opStructFieldPtrHeadBoolOmitEmpty,
+		opStructFieldPtrHeadOmitEmptyIndent,
+		opStructFieldPtrHeadIntOmitEmptyIndent,
+		opStructFieldPtrHeadInt8OmitEmptyIndent,
+		opStructFieldPtrHeadInt16OmitEmptyIndent,
+		opStructFieldPtrHeadInt32OmitEmptyIndent,
+		opStructFieldPtrHeadInt64OmitEmptyIndent,
+		opStructFieldPtrHeadUintOmitEmptyIndent,
+		opStructFieldPtrHeadUint8OmitEmptyIndent,
+		opStructFieldPtrHeadUint16OmitEmptyIndent,
+		opStructFieldPtrHeadUint32OmitEmptyIndent,
+		opStructFieldPtrHeadUint64OmitEmptyIndent,
+		opStructFieldPtrHeadFloat32OmitEmptyIndent,
+		opStructFieldPtrHeadFloat64OmitEmptyIndent,
+		opStructFieldPtrHeadStringOmitEmptyIndent,
+		opStructFieldPtrHeadBoolOmitEmptyIndent,
+		opStructField,
+		opStructFieldInt,
+		opStructFieldInt8,
+		opStructFieldInt16,
+		opStructFieldInt32,
+		opStructFieldInt64,
+		opStructFieldUint,
+		opStructFieldUint8,
+		opStructFieldUint16,
+		opStructFieldUint32,
+		opStructFieldUint64,
+		opStructFieldFloat32,
+		opStructFieldFloat64,
+		opStructFieldString,
+		opStructFieldBool,
+		opStructFieldIndent,
+		opStructFieldIntIndent,
+		opStructFieldInt8Indent,
+		opStructFieldInt16Indent,
+		opStructFieldInt32Indent,
+		opStructFieldInt64Indent,
+		opStructFieldUintIndent,
+		opStructFieldUint8Indent,
+		opStructFieldUint16Indent,
+		opStructFieldUint32Indent,
+		opStructFieldUint64Indent,
+		opStructFieldFloat32Indent,
+		opStructFieldFloat64Indent,
+		opStructFieldStringIndent,
+		opStructFieldBoolIndent,
+		opStructFieldOmitEmpty,
+		opStructFieldIntOmitEmpty,
+		opStructFieldInt8OmitEmpty,
+		opStructFieldInt16OmitEmpty,
+		opStructFieldInt32OmitEmpty,
+		opStructFieldInt64OmitEmpty,
+		opStructFieldUintOmitEmpty,
+		opStructFieldUint8OmitEmpty,
+		opStructFieldUint16OmitEmpty,
+		opStructFieldUint32OmitEmpty,
+		opStructFieldUint64OmitEmpty,
+		opStructFieldFloat32OmitEmpty,
+		opStructFieldFloat64OmitEmpty,
+		opStructFieldStringOmitEmpty,
+		opStructFieldBoolOmitEmpty,
+		opStructFieldOmitEmptyIndent,
+		opStructFieldIntOmitEmptyIndent,
+		opStructFieldInt8OmitEmptyIndent,
+		opStructFieldInt16OmitEmptyIndent,
+		opStructFieldInt32OmitEmptyIndent,
+		opStructFieldInt64OmitEmptyIndent,
+		opStructFieldUintOmitEmptyIndent,
+		opStructFieldUint8OmitEmptyIndent,
+		opStructFieldUint16OmitEmptyIndent,
+		opStructFieldUint32OmitEmptyIndent,
+		opStructFieldUint64OmitEmptyIndent,
+		opStructFieldFloat32OmitEmptyIndent,
+		opStructFieldFloat64OmitEmptyIndent,
+		opStructFieldStringOmitEmptyIndent,
+		opStructFieldBoolOmitEmptyIndent:
+		code = c.toStructFieldCode().copy(codeMap)
+	default:
+		code = &opcode{}
+		codeMap[addr] = code
+
+		code.opcodeHeader = c.opcodeHeader.copy(codeMap)
+	}
+	return code
+}
+
 func (c *opcode) dump() string {
 	codes := []string{}
 	for code := c; code.op != opEnd; {
@@ -783,9 +1035,9 @@ func (c *opcode) dump() string {
 		switch code.op {
 		case opArrayElem, opArrayElemIndent:
 			code = code.toArrayElemCode().end
-		case opSliceElem, opSliceElemIndent:
+		case opSliceElem, opSliceElemIndent, opRootSliceElemIndent:
 			code = code.toSliceElemCode().end
-		case opMapKey, opMapKeyIndent:
+		case opMapKey, opMapKeyIndent, opRootMapKeyIndent:
 			code = code.toMapKeyCode().end
 		default:
 			code = code.next
@@ -826,6 +1078,14 @@ func (c *opcode) toMapValueCode() *mapValueCode {
 	return (*mapValueCode)(unsafe.Pointer(c))
 }
 
+func (c *opcode) toInterfaceCode() *interfaceCode {
+	return (*interfaceCode)(unsafe.Pointer(c))
+}
+
+func (c *opcode) toRecursiveCode() *recursiveCode {
+	return (*recursiveCode)(unsafe.Pointer(c))
+}
+
 type sliceHeaderCode struct {
 	*opcodeHeader
 	elem *sliceElemCode
@@ -841,6 +1101,24 @@ func newSliceHeaderCode(indent int) *sliceHeaderCode {
 	}
 }
 
+func (c *sliceHeaderCode) copy(codeMap map[uintptr]*opcode) *opcode {
+	if c == nil {
+		return nil
+	}
+	addr := uintptr(unsafe.Pointer(c))
+	if code, exists := codeMap[addr]; exists {
+		return code
+	}
+	header := &sliceHeaderCode{}
+	code := (*opcode)(unsafe.Pointer(header))
+	codeMap[addr] = code
+
+	header.opcodeHeader = c.opcodeHeader.copy(codeMap)
+	header.elem = (*sliceElemCode)(unsafe.Pointer(c.elem.copy(codeMap)))
+	header.end = c.end.copy(codeMap)
+	return code
+}
+
 type sliceElemCode struct {
 	*opcodeHeader
 	idx  uintptr
@@ -854,6 +1132,28 @@ func (c *sliceElemCode) set(header *reflect.SliceHeader) {
 	c.idx = uintptr(0)
 	c.len = uintptr(header.Len)
 	c.data = header.Data
+}
+
+func (c *sliceElemCode) copy(codeMap map[uintptr]*opcode) *opcode {
+	if c == nil {
+		return nil
+	}
+	addr := uintptr(unsafe.Pointer(c))
+	if code, exists := codeMap[addr]; exists {
+		return code
+	}
+	elem := &sliceElemCode{
+		idx:  c.idx,
+		len:  c.len,
+		size: c.size,
+		data: c.data,
+	}
+	code := (*opcode)(unsafe.Pointer(elem))
+	codeMap[addr] = code
+
+	elem.opcodeHeader = c.opcodeHeader.copy(codeMap)
+	elem.end = c.end.copy(codeMap)
+	return code
 }
 
 type arrayHeaderCode struct {
@@ -873,12 +1173,52 @@ func newArrayHeaderCode(indent, alen int) *arrayHeaderCode {
 	}
 }
 
+func (c *arrayHeaderCode) copy(codeMap map[uintptr]*opcode) *opcode {
+	if c == nil {
+		return nil
+	}
+	addr := uintptr(unsafe.Pointer(c))
+	if code, exists := codeMap[addr]; exists {
+		return code
+	}
+	header := &arrayHeaderCode{}
+	code := (*opcode)(unsafe.Pointer(header))
+	codeMap[addr] = code
+
+	header.opcodeHeader = c.opcodeHeader.copy(codeMap)
+	header.len = c.len
+	header.elem = (*arrayElemCode)(unsafe.Pointer(c.elem.copy(codeMap)))
+	header.end = c.end.copy(codeMap)
+	return code
+}
+
 type arrayElemCode struct {
 	*opcodeHeader
 	idx  uintptr
 	len  uintptr
 	size uintptr
 	end  *opcode
+}
+
+func (c *arrayElemCode) copy(codeMap map[uintptr]*opcode) *opcode {
+	if c == nil {
+		return nil
+	}
+	addr := uintptr(unsafe.Pointer(c))
+	if code, exists := codeMap[addr]; exists {
+		return code
+	}
+	elem := &arrayElemCode{
+		idx:  c.idx,
+		len:  c.len,
+		size: c.size,
+	}
+	code := (*opcode)(unsafe.Pointer(elem))
+	codeMap[addr] = code
+
+	elem.opcodeHeader = c.opcodeHeader.copy(codeMap)
+	elem.end = c.end.copy(codeMap)
+	return code
 }
 
 type structFieldCode struct {
@@ -889,11 +1229,51 @@ type structFieldCode struct {
 	end       *opcode
 }
 
+func (c *structFieldCode) copy(codeMap map[uintptr]*opcode) *opcode {
+	if c == nil {
+		return nil
+	}
+	addr := uintptr(unsafe.Pointer(c))
+	if code, exists := codeMap[addr]; exists {
+		return code
+	}
+	field := &structFieldCode{
+		key:    c.key,
+		offset: c.offset,
+	}
+	code := (*opcode)(unsafe.Pointer(field))
+	codeMap[addr] = code
+
+	field.opcodeHeader = c.opcodeHeader.copy(codeMap)
+	field.nextField = c.nextField.copy(codeMap)
+	field.end = c.end.copy(codeMap)
+	return code
+}
+
 type mapHeaderCode struct {
 	*opcodeHeader
 	key   *mapKeyCode
 	value *mapValueCode
 	end   *opcode
+}
+
+func (c *mapHeaderCode) copy(codeMap map[uintptr]*opcode) *opcode {
+	if c == nil {
+		return nil
+	}
+	addr := uintptr(unsafe.Pointer(c))
+	if code, exists := codeMap[addr]; exists {
+		return code
+	}
+	header := &mapHeaderCode{}
+	code := (*opcode)(unsafe.Pointer(header))
+	codeMap[addr] = code
+
+	header.opcodeHeader = c.opcodeHeader.copy(codeMap)
+	header.key = (*mapKeyCode)(unsafe.Pointer(c.key.copy(codeMap)))
+	header.value = (*mapValueCode)(unsafe.Pointer(c.value.copy(codeMap)))
+	header.end = c.end.copy(codeMap)
+	return code
 }
 
 type mapKeyCode struct {
@@ -902,6 +1282,27 @@ type mapKeyCode struct {
 	len  int
 	iter unsafe.Pointer
 	end  *opcode
+}
+
+func (c *mapKeyCode) copy(codeMap map[uintptr]*opcode) *opcode {
+	if c == nil {
+		return nil
+	}
+	addr := uintptr(unsafe.Pointer(c))
+	if code, exists := codeMap[addr]; exists {
+		return code
+	}
+	key := &mapKeyCode{
+		idx:  c.idx,
+		len:  c.len,
+		iter: c.iter,
+	}
+	code := (*opcode)(unsafe.Pointer(key))
+	codeMap[addr] = code
+
+	key.opcodeHeader = c.opcodeHeader.copy(codeMap)
+	key.end = c.end.copy(codeMap)
+	return code
 }
 
 func (c *mapKeyCode) set(len int, iter unsafe.Pointer) {
@@ -915,14 +1316,38 @@ type mapValueCode struct {
 	iter unsafe.Pointer
 }
 
+func (c *mapValueCode) copy(codeMap map[uintptr]*opcode) *opcode {
+	if c == nil {
+		return nil
+	}
+	addr := uintptr(unsafe.Pointer(c))
+	if code, exists := codeMap[addr]; exists {
+		return code
+	}
+	value := &mapValueCode{
+		iter: c.iter,
+	}
+	code := (*opcode)(unsafe.Pointer(value))
+	codeMap[addr] = code
+
+	value.opcodeHeader = c.opcodeHeader.copy(codeMap)
+	return code
+}
+
 func (c *mapValueCode) set(iter unsafe.Pointer) {
 	c.iter = iter
 }
 
-func newMapHeaderCode(typ *rtype, indent int) *mapHeaderCode {
+func newMapHeaderCode(typ *rtype, withLoad bool, indent int) *mapHeaderCode {
+	var op opType
+	if withLoad {
+		op = opMapHeadLoad
+	} else {
+		op = opMapHead
+	}
 	return &mapHeaderCode{
 		opcodeHeader: &opcodeHeader{
-			op:     opMapHead,
+			op:     op,
 			typ:    typ,
 			indent: indent,
 		},
@@ -945,4 +1370,49 @@ func newMapValueCode(indent int) *mapValueCode {
 			indent: indent,
 		},
 	}
+}
+
+type interfaceCode struct {
+	*opcodeHeader
+	root bool
+}
+
+func (c *interfaceCode) copy(codeMap map[uintptr]*opcode) *opcode {
+	if c == nil {
+		return nil
+	}
+	addr := uintptr(unsafe.Pointer(c))
+	if code, exists := codeMap[addr]; exists {
+		return code
+	}
+	iface := &interfaceCode{}
+	code := (*opcode)(unsafe.Pointer(iface))
+	codeMap[addr] = code
+
+	iface.opcodeHeader = c.opcodeHeader.copy(codeMap)
+	return code
+}
+
+type recursiveCode struct {
+	*opcodeHeader
+	jmp *compiledCode
+}
+
+func (c *recursiveCode) copy(codeMap map[uintptr]*opcode) *opcode {
+	if c == nil {
+		return nil
+	}
+	addr := uintptr(unsafe.Pointer(c))
+	if code, exists := codeMap[addr]; exists {
+		return code
+	}
+	recur := &recursiveCode{}
+	code := (*opcode)(unsafe.Pointer(recur))
+	codeMap[addr] = code
+
+	recur.opcodeHeader = c.opcodeHeader.copy(codeMap)
+	recur.jmp = &compiledCode{
+		code: c.jmp.code.copy(codeMap),
+	}
+	return code
 }
